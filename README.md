@@ -4,6 +4,7 @@
 
 ![Python](https://img.shields.io/badge/python-3.9%2B-blue)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22166513.svg)](https://doi.org/10.5281/zenodo.22166513)
 
 ![Figora screenshot](screenshots/figora-main.png)
 
