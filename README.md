@@ -130,9 +130,7 @@ Produces `dist/Figora.app` — zip it as `figora-macos-x64.zip` (Intel) or `figo
 ```bash
 pyinstaller --noconfirm --onefile --windowed --name figora-linux-x64 --collect-all customtkinter figora.py
 ```
-Produces `dist/figora-linux-x64` (~39 MB). This exact command was built and run end-to-end while preparing this project.
-
-Attach the resulting files to a GitHub Release using exactly the names in the [Download](#download) table so the `/releases/latest/download/…` links resolve automatically.
+Produces `dist/figora-linux-x64`.
 
 ## Contributing
 
