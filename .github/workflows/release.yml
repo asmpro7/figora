@@ -1,0 +1,137 @@
+name: Build and Release Figora
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: windows-x64
+            output: figora-windows-x64.exe
+          - os: macos-15-intel
+            target: macos-x64
+            output: figora-macos-x64.zip
+          - os: macos-latest
+            target: macos-arm64
+            output: figora-macos-arm64.zip
+          - os: ubuntu-latest
+            target: linux-x64
+            output: figora-linux-x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          fi
+
+      # macOS .ico can technically be auto-converted by PyInstaller via Pillow,
+      # but building a real .icns from the high-res source PNG gives a much
+      # sharper icon at large sizes (Finder, Launchpad, Dock) than upscaling
+      # from the 256px-max .ico would.
+      - name: Generate macOS .icns
+        if: runner.os == 'macOS'
+        run: |
+          mkdir figora.iconset
+          sips -z 16 16     figora-logo.png --out figora.iconset/icon_16x16.png
+          sips -z 32 32     figora-logo.png --out figora.iconset/icon_16x16@2x.png
+          sips -z 32 32     figora-logo.png --out figora.iconset/icon_32x32.png
+          sips -z 64 64     figora-logo.png --out figora.iconset/icon_32x32@2x.png
+          sips -z 128 128   figora-logo.png --out figora.iconset/icon_128x128.png
+          sips -z 256 256   figora-logo.png --out figora.iconset/icon_128x128@2x.png
+          sips -z 256 256   figora-logo.png --out figora.iconset/icon_256x256.png
+          sips -z 512 512   figora-logo.png --out figora.iconset/icon_256x256@2x.png
+          sips -z 512 512   figora-logo.png --out figora.iconset/icon_512x512.png
+          sips -z 1024 1024 figora-logo.png --out figora.iconset/icon_512x512@2x.png
+          iconutil -c icns figora.iconset -o figora.icns
+
+      - name: Build
+        shell: bash
+        run: |
+          ICON_ARG="--icon figora.ico"
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            ICON_ARG="--icon figora.icns"
+          elif [ "${{ runner.os }}" = "Linux" ]; then
+            ICON_ARG="--icon NONE"
+          fi
+
+          pyinstaller \
+            --noconfirm \
+            --onefile \
+            --windowed \
+            --name figora \
+            --collect-all customtkinter \
+            $ICON_ARG \
+            figora.py
+
+      - name: Package Windows
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          mv dist/figora.exe "${{ matrix.output }}"
+
+      - name: Package Linux
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          mv dist/figora "${{ matrix.output }}"
+          chmod +x "${{ matrix.output }}"
+
+      - name: Package macOS
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          ditto -c -k --sequesterRsrc --keepParent \
+            dist/figora.app \
+            "${{ matrix.output }}"
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: ${{ matrix.output }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release
+
+      # GitHub Actions' artifact upload/download has a history of not
+      # reliably preserving the Unix executable bit - reassert it here so
+      # the Linux binary is guaranteed runnable straight out of the release,
+      # even if this run's upload/download round-trip dropped it.
+      - name: Restore executable permission on Linux binary
+        run: find release -type f -name 'figora-linux-x64' -exec chmod +x {} \;
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/**/*
+          generate_release_notes: true
