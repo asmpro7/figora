@@ -124,7 +124,7 @@ Produces `dist\figora-windows-x64.exe`.
 ```bash
 pyinstaller --noconfirm --onefile --windowed --name Figora --collect-all customtkinter figora.py
 ```
-Produces `dist/Figora.app` — zip it as `figora-macos-x64.zip` (Intel) or `figora-macos-arm64.zip` (Apple Silicon).
+Produces `dist/Figora.app`.
 
 **Linux:**
 ```bash
