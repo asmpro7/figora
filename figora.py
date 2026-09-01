@@ -189,6 +189,8 @@ def load_fallback_font(size):
 # Main application
 # ---------------------------------------------------------------------------
 class FigoraApp:
+    VERSION = "1.0.1"
+
     CELL_SIZE_MODES = ["Fit to largest photo",
                        "Fit to smallest photo", "Custom size"]
     LABEL_STYLES = ["None", "Uppercase (A, B, C\u2026)", "Lowercase (a, b, c\u2026)",
@@ -207,9 +209,10 @@ class FigoraApp:
 
     def __init__(self, root):
         self.root = root
-        self.root.title("Figora \u2014 Publication Figure Assembler")
+        self.root.title(f"Figora (v{self.VERSION})")
         self.root.geometry("1380x900")
         self.root.minsize(1060, 680)
+        self._set_app_icon()
 
         # ---- state ----
         self.images = []          # list[PIL.Image.Image]
@@ -297,6 +300,8 @@ class FigoraApp:
 
         self.figure_caption_text = ""
         self.figure_caption_position = self.CAPTION_POSITIONS[0]
+        self.caption_font_size = 32
+        self.caption_color = (0, 0, 0)
 
         self.scale_bar_enabled = False
         self.scale_bar_length_px = 100
@@ -349,6 +354,59 @@ class FigoraApp:
             body.pack(fill="x", padx=(6, 0), pady=(6, 2))
 
         return body
+
+    # ------------------------------------------------------------------
+    # App icon
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _resource_dir():
+        """Directory to look for bundled assets (icon, logo) in. When
+        frozen by PyInstaller with --add-data, bundled files are extracted
+        at runtime to sys._MEIPASS, not to wherever the original script
+        lived - this returns the right directory for either case."""
+        if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+            return sys._MEIPASS
+        return os.path.dirname(os.path.abspath(__file__))
+
+    def _set_app_icon(self):
+        """Use the Figora logo as the window/taskbar/dock icon instead of
+        the default Tk icon. Looks for figora.ico and figora-logo.png in
+        _resource_dir() - next to this script when run from source, or in
+        PyInstaller's extracted bundle directory when run as a onefile
+        executable built with --add-data "figora.ico:." --add-data
+        "figora-logo.png:. ". Windows gets the native multi-resolution
+        .ico via iconbitmap (best quality for the taskbar); macOS/Linux
+        get the PNG via iconphoto, which is what those platforms' window
+        managers actually expect. Every step is wrapped defensively - a
+        missing or unreadable icon file should never prevent the app from
+        starting."""
+        base_dir = self._resource_dir()
+        ico_path = os.path.join(base_dir, "figora.ico")
+        png_path = os.path.join(base_dir, "figora-logo.png")
+
+        if sys.platform == "win32" and os.path.isfile(ico_path):
+            try:
+                self.root.iconbitmap(ico_path)
+                return
+            except Exception:
+                pass  # fall through and try the PNG instead
+
+        for path in (png_path, ico_path):
+            if not os.path.isfile(path):
+                continue
+            try:
+                icon_img = Image.open(path).convert("RGBA")
+                icon_img.thumbnail((256, 256), RESAMPLE_LANCZOS)
+                # keep a reference alive for the life of the app - once the
+                # last Python reference to a PhotoImage is dropped, Tk
+                # deletes the underlying image and the icon can vanish
+                self._app_icon_photo = ImageTk.PhotoImage(icon_img)
+                self.root.iconphoto(True, self._app_icon_photo)
+                return
+            except Exception:
+                continue
+        # neither file is present/readable - keep Tk's default icon rather
+        # than raise, since a missing icon shouldn't block the app opening
 
     # ------------------------------------------------------------------
     # Section builders
@@ -566,11 +624,29 @@ class FigoraApp:
         self.caption_position_menu = customtkinter.CTkOptionMenu(
             body, values=self.CAPTION_POSITIONS, command=self._on_caption_position_change)
         self.caption_position_menu.set(self.figure_caption_position)
-        self.caption_position_menu.pack(fill="x", pady=(0, 4))
+        self.caption_position_menu.pack(fill="x", pady=(0, 6))
+
+        self.caption_font_size_slider, self.caption_font_size_value_label = self._build_slider_row(
+            body, "Caption font size (px)", 8, 400, self.caption_font_size, 392,
+            self._on_caption_font_size_slider)
+
+        caption_color_row = customtkinter.CTkFrame(
+            body, fg_color="transparent")
+        caption_color_row.pack(fill="x", pady=(4, 4))
         customtkinter.CTkLabel(
-            body, text="Uses the label font/color, slightly enlarged.",
+            caption_color_row, text="Caption color").pack(side="left")
+        self.caption_color_swatch = customtkinter.CTkButton(
+            caption_color_row, text="Color\u2026", width=90, command=self.choose_caption_color,
+            fg_color=self._rgb_to_hex(self.caption_color),
+            hover_color=self._rgb_to_hex(self.caption_color),
+            text_color=self._contrast_text_color(self.caption_color))
+        self.caption_color_swatch.pack(side="right")
+
+        customtkinter.CTkLabel(
+            body, text="Wraps to a new line automatically to stay within the figure "
+                       "width. Uses the same font family as panel labels.",
             text_color="gray60", wraplength=330, justify="left"
-        ).pack(anchor="w", pady=(0, 4))
+        ).pack(anchor="w", pady=(4, 4))
 
     def _build_scale_bar_section(self):
         body = self._add_collapsible_section("Scale Bar", expanded=False)
@@ -1077,6 +1153,22 @@ class FigoraApp:
         self.figure_caption_position = choice
         self.request_preview_update()
 
+    def _on_caption_font_size_slider(self, value):
+        self.caption_font_size = int(round(value))
+        self.caption_font_size_value_label.configure(
+            text=str(self.caption_font_size))
+        self.request_preview_update()
+
+    def choose_caption_color(self):
+        _, hex_color = colorchooser.askcolor(
+            color=self._rgb_to_hex(self.caption_color), title="Choose Caption Color")
+        if hex_color:
+            self.caption_color = self._hex_to_rgb(hex_color)
+            self.caption_color_swatch.configure(
+                fg_color=hex_color, hover_color=hex_color,
+                text_color=self._contrast_text_color(self.caption_color))
+            self.request_preview_update()
+
     def _on_scale_bar_toggle(self):
         self.scale_bar_enabled = bool(self.scale_bar_checkbox.get())
         state = "normal" if self.scale_bar_enabled else "disabled"
@@ -1206,14 +1298,16 @@ class FigoraApp:
                            "None" and self.label_position == "Above panel")
         top_pad = int(font_size * 1.6) if needs_top_space else 0
 
-        caption_text = self.figure_caption_text.strip()
-        caption_font_size = int(font_size * 1.25) if caption_text else 0
-        caption_pad = int(caption_font_size * 1.8) if caption_text else 0
-
         grid_w = cols * cell_w + max(0, cols - 1) * h_spacing
         grid_h = rows * (cell_h + top_pad) + max(0, rows - 1) * v_spacing
+        canvas_w = margin * 2 + grid_w  # width doesn't depend on the caption
 
-        canvas_w = margin * 2 + grid_w
+        caption_text = self.figure_caption_text.strip()
+        caption_font_size = max(
+            1, self.caption_font_size) if caption_text else 0
+        caption_lines, caption_pad = self._compute_caption_layout(
+            caption_text, caption_font_size, canvas_w, margin)
+
         canvas_h = margin * 2 + caption_pad + grid_h
 
         grid_start_y = margin + \
@@ -1225,6 +1319,7 @@ class FigoraApp:
             "font_size": font_size, "top_pad": top_pad,
             "border_width": border_width, "scale_bar_thickness": scale_bar_thickness,
             "caption_font_size": caption_font_size, "caption_pad": caption_pad,
+            "caption_lines": caption_lines,
             "grid_start_y": grid_start_y,
             "canvas_w": canvas_w, "canvas_h": canvas_h,
         }
@@ -1236,7 +1331,10 @@ class FigoraApp:
         the canvas size always exactly consistent with its parts, and lets
         each component enforce its own minimum-visible-size floor so thin
         elements (a 1-3px border, small spacing, etc.) don't silently round
-        away to 0 and "disappear" in a heavily shrunk preview."""
+        away to 0 and "disappear" in a heavily shrunk preview. The caption
+        is re-wrapped at the scaled font size/width rather than reusing the
+        natural line count, so preview wrapping always matches what's
+        actually drawn at this resolution."""
         largest = max(natural["canvas_w"], natural["canvas_h"], 1)
         scale = min(1.0, max_dim / largest) if max_dim else 1.0
 
@@ -1256,14 +1354,17 @@ class FigoraApp:
                           floor=font_size) if natural["top_pad"] else 0
         border_width = floored(natural["border_width"])
         scale_bar_thickness = floored(natural["scale_bar_thickness"])
-        caption_font_size = (max(6, int(round(natural["caption_font_size"] * scale)))
-                             if natural["caption_font_size"] else 0)
-        caption_pad = (floored(natural["caption_pad"], floor=max(1, caption_font_size))
-                       if natural["caption_pad"] else 0)
 
         grid_w = cols * cell_w + max(0, cols - 1) * h_spacing
         grid_h = rows * (cell_h + top_pad) + max(0, rows - 1) * v_spacing
         canvas_w = margin * 2 + grid_w
+
+        caption_text = self.figure_caption_text.strip()
+        caption_font_size = (max(6, int(round(natural["caption_font_size"] * scale)))
+                             if natural["caption_font_size"] else 0)
+        caption_lines, caption_pad = self._compute_caption_layout(
+            caption_text, caption_font_size, canvas_w, margin)
+
         canvas_h = margin * 2 + caption_pad + grid_h
         grid_start_y = margin + \
             (caption_pad if self.figure_caption_position == "Top" else 0)
@@ -1274,6 +1375,7 @@ class FigoraApp:
             "font_size": font_size, "top_pad": top_pad,
             "border_width": border_width, "scale_bar_thickness": scale_bar_thickness,
             "caption_font_size": caption_font_size, "caption_pad": caption_pad,
+            "caption_lines": caption_lines,
             "grid_start_y": grid_start_y,
             "canvas_w": canvas_w, "canvas_h": canvas_h,
         }
@@ -1401,6 +1503,52 @@ class FigoraApp:
             y -= h
 
         draw.text((x - off_x, y - off_y), text, font=font, fill=fill)
+
+    def _text_width(self, draw, text, font):
+        try:
+            bbox = draw.textbbox((0, 0), text, font=font)
+            return bbox[2] - bbox[0]
+        except Exception:
+            return draw.textsize(text, font=font)[0]
+
+    def _wrap_text_lines(self, text, font, max_width):
+        """Word-wrap text to fit within max_width at the given font.
+        Returns at least one line (an empty string for empty input), and
+        never breaks in the middle of a word - a single word wider than
+        max_width on its own is simply left to overflow that one line,
+        the same way most text renderers handle an unbreakable run."""
+        scratch = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+        words = text.split()
+        if not words:
+            return [""]
+        lines = []
+        current = words[0]
+        for word in words[1:]:
+            candidate = f"{current} {word}"
+            if self._text_width(scratch, candidate, font) <= max_width:
+                current = candidate
+            else:
+                lines.append(current)
+                current = word
+        lines.append(current)
+        return lines
+
+    def _compute_caption_layout(self, caption_text, caption_font_size, canvas_w, margin):
+        """Resolve the caption font at caption_font_size, word-wrap
+        caption_text so it stays within the figure width with a small
+        safety margin before the edge, and return (lines, vertical space
+        needed). Called from both _natural_metrics and _scaled_metrics so
+        the space reserved in the layout always matches what compose_figure
+        actually draws, at either full or preview resolution."""
+        if not caption_text or caption_font_size <= 0:
+            return [], 0
+        side_pad = max(16, round(caption_font_size * 0.4))
+        max_width = max(20, canvas_w - 2 * margin - 2 * side_pad)
+        font = self._get_pil_font(caption_font_size)
+        lines = self._wrap_text_lines(caption_text, font, max_width)
+        line_height = int(caption_font_size * 1.35)
+        pad = line_height * len(lines) + int(caption_font_size * 0.6)
+        return lines, pad
 
     def _draw_label(self, draw, text, font, position, cell_x, img_y, cell_w, cell_h, cell_y, top_pad):
         pad = 4
@@ -1530,18 +1678,23 @@ class FigoraApp:
                 self._draw_label(draw, label_text, label_font, self.label_position,
                                  cell_x, img_y, cell_w, cell_h, cell_y, top_pad)
 
-        caption_text = self.figure_caption_text.strip()
-        if caption_text:
+        caption_lines = metrics.get("caption_lines") or []
+        if caption_lines:
             caption_font = self._get_pil_font(metrics["caption_font_size"])
+            line_height = int(metrics["caption_font_size"] * 1.35)
+            block_height = line_height * len(caption_lines)
             if self.figure_caption_position == "Top":
-                cap_y = metrics["margin"] + metrics["caption_pad"] / 2
+                block_top = metrics["margin"] + \
+                    (metrics["caption_pad"] - block_height) / 2
             else:
-                cap_y = metrics["canvas_h"] - \
-                    metrics["margin"] - metrics["caption_pad"] / 2
-            self._draw_anchored_text(
-                draw, (metrics["canvas_w"] / 2,
-                       cap_y), caption_text, caption_font,
-                self.font_color, h_align="center", v_align="middle")
+                block_top = (metrics["canvas_h"] - metrics["margin"] - metrics["caption_pad"]
+                             + (metrics["caption_pad"] - block_height) / 2)
+            for i, line in enumerate(caption_lines):
+                line_cy = block_top + line_height * i + line_height / 2
+                self._draw_anchored_text(
+                    draw, (metrics["canvas_w"] / 2,
+                           line_cy), line, caption_font,
+                    self.caption_color, h_align="center", v_align="middle")
 
         return canvas
 
@@ -1754,6 +1907,8 @@ class FigoraApp:
             "auto_contrast_enabled": self.auto_contrast_enabled,
             "figure_caption_text": self.figure_caption_text,
             "figure_caption_position": self.figure_caption_position,
+            "caption_font_size": self.caption_font_size,
+            "caption_color": list(self.caption_color),
             "scale_bar_enabled": self.scale_bar_enabled,
             "scale_bar_length_px": self.scale_bar_length_px,
             "scale_bar_label": self.scale_bar_label,
@@ -1800,6 +1955,10 @@ class FigoraApp:
             "figure_caption_text", self.figure_caption_text)
         self.figure_caption_position = g(
             "figure_caption_position", self.figure_caption_position)
+        self.caption_font_size = int(
+            g("caption_font_size", self.caption_font_size))
+        self.caption_color = tuple(
+            g("caption_color", list(self.caption_color)))
         self.scale_bar_enabled = bool(
             g("scale_bar_enabled", self.scale_bar_enabled))
         self.scale_bar_length_px = int(
@@ -1913,6 +2072,13 @@ class FigoraApp:
         self.caption_entry.delete(0, "end")
         self.caption_entry.insert(0, self.figure_caption_text)
         self.caption_position_menu.set(self.figure_caption_position)
+        self.caption_font_size_slider.set(self.caption_font_size)
+        self.caption_font_size_value_label.configure(
+            text=str(self.caption_font_size))
+        self.caption_color_swatch.configure(
+            fg_color=self._rgb_to_hex(self.caption_color),
+            hover_color=self._rgb_to_hex(self.caption_color),
+            text_color=self._contrast_text_color(self.caption_color))
 
         if self.scale_bar_enabled:
             self.scale_bar_checkbox.select()
@@ -1972,6 +2138,8 @@ class FigoraApp:
             "auto_contrast_enabled": self.auto_contrast_enabled,
             "figure_caption_text": self.figure_caption_text,
             "figure_caption_position": self.figure_caption_position,
+            "caption_font_size": self.caption_font_size,
+            "caption_color": list(self.caption_color),
             "scale_bar_enabled": self.scale_bar_enabled,
             "scale_bar_length_px": self.scale_bar_length_px,
             "scale_bar_label": self.scale_bar_label,
@@ -2045,19 +2213,20 @@ class FigoraApp:
     def show_about(self):
         about_window = customtkinter.CTkToplevel(self.root)
         about_window.title("About Figora")
-        about_window.geometry("460x460")
+        about_window.geometry("460x470")
         about_window.resizable(False, False)
 
         customtkinter.CTkLabel(
             about_window,
             text=(
-                "Figora\n\n"
+                f"Figora  \u00b7  v{self.VERSION}\n\n"
                 "Combine multiple photos into a single labeled figure\n"
                 "for manuscripts, posters, and presentations.\n\n"
                 "Live zoomable preview, panel reordering, label styles/\n"
                 "positions, spacing/margin/border control, grayscale and\n"
-                "contrast adjustment, a figure caption, a calibrated scale\n"
-                "bar, project save/load, and export to PNG, TIFF, JPEG, or PDF."
+                "contrast adjustment, a word-wrapped figure caption with\n"
+                "its own size and color, a calibrated scale bar, project\n"
+                "save/load, and export to PNG, TIFF, JPEG, or PDF."
             ),
             justify="center",
         ).pack(padx=20, pady=(20, 10))
@@ -2078,6 +2247,8 @@ class FigoraApp:
                               "https://www.linkedin.com/in/asmpro/").pack(pady=1)
         self._make_link_label(links_frame, "Email: AhmedElSaeedMassad@gmail.com",
                               "mailto:AhmedElSaeedMassad@gmail.com").pack(pady=1)
+        self._make_link_label(links_frame, "DOI: 10.5281/zenodo.22166513",
+                              "https://doi.org/10.5281/zenodo.22166513").pack(pady=1)
 
         customtkinter.CTkButton(about_window, text="Close", command=about_window.destroy).pack(
             pady=(0, 15))
