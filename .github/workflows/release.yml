@@ -77,12 +77,23 @@ jobs:
             ICON_ARG="--icon NONE"
           fi
 
+          # --add-data uses ";" as the source/dest separator on Windows and
+          # ":" everywhere else. Both files land at the root of the bundle
+          # (dest "."), which is exactly where figora.py's _resource_dir()
+          # looks for them at runtime via sys._MEIPASS when frozen.
+          SEP=":"
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            SEP=";"
+          fi
+
           pyinstaller \
             --noconfirm \
             --onefile \
             --windowed \
             --name figora \
             --collect-all customtkinter \
+            --add-data "figora.ico${SEP}." \
+            --add-data "figora-logo.png${SEP}." \
             $ICON_ARG \
             figora.py
 
